@@ -7,6 +7,8 @@ or
 
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
+#using below link to download kubectl https://medium.com/@ggauravsigra/install-kubectl-on-windows-af77da2e6fff
+and add the PATH in sys var and execute kubectl in cmd
 
 #install helm 
 
