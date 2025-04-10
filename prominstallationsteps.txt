@@ -19,7 +19,7 @@ https://github.com/helm/helm/releases
 download the file 
 Windows amd64 (hyperlink)
 
-
+after installing add the helm path to environment variables under system variables PATH
 
 #Check helm version
 
