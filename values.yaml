@@ -207,9 +207,6 @@ server:
   ## prometheus server priorityClassName
   ##
   priorityClassName: ""
-  ## prometheus server runtimeClassName
-  ##
-  runtimeClassName: ""
 
   ## EnableServiceLinks indicates whether information about services should be injected
   ## into pod's environment variables, matching the syntax of Docker links.
@@ -768,18 +765,46 @@ scrapeConfigFiles: []
 serverFiles:
   ## Alerts configuration
   ## Ref: https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/
-  alerting_rules.yml: {}
-  # groups:
-  #   - name: Instances
-  #     rules:
-  #       - alert: InstanceDown
-  #         expr: up == 0
-  #         for: 5m
-  #         labels:
-  #           severity: page
-  #         annotations:
-  #           description: '{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 5 minutes.'
-  #           summary: 'Instance {{ $labels.instance }} down'
+  alerting_rules.yml:  
+   groups:
+     - name: Instances
+       rules:
+         - alert: InstanceDown
+           expr: up == 0
+           for: 1m
+           labels:
+             severity: page
+           annotations:
+             description: '{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minute.'
+             summary: 'Instance {{ $labels.instance }} down'
+         - alert: HighCPUUsage
+           expr: 100 * (1 - avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 20
+           for: 2m
+           labels:
+             severity: warning             
+           annotations:
+             summary: "Instance {{ $labels.instance }} CPU usage is high"
+             description: "CPU usage on instance {{ $labels.instance }} has been above 20% for the last 2 minutes."
+         - alert: LowAvailableMemory
+           expr: node_memory_MemAvailable_bytes{job="node_exporter"} / node_memory_MemTotal_bytes{job="node_exporter"} * 100 >50
+           for: 2m
+           labels:
+             severity: critical
+             inhibit: "true"
+           annotations:
+             summary: "Low memory available on {{ $labels.instance }}"
+             description: "Available memory on instance {{ $labels.instance }} is above 50% for more than 2 minutes."
+
+         - alert: HighMemoryUsage
+           expr: node_memory_MemAvailable_bytes{job="node_exporter"} / node_memory_MemTotal_bytes{job="node_exporter"} * 100 >25
+           for: 2m
+           labels:
+             severity: warning
+             inhibited: "true"  
+           annotations:
+             summary: "High Memory Usage {{ $labels.instance }}"
+             description: "High Memory Usage for {{ $labels.instance }} is above 25% for more than 2 minutes."
+
   ## DEPRECATED DEFAULT VALUE, unless explicitly naming your files, please use alerting_rules.yml
   alerts: {}
 
@@ -802,7 +827,20 @@ serverFiles:
         static_configs:
           - targets:
             - localhost:9090
-
+      - job_name: 'customer-app'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets: ['host.docker.internal:7074']
+      - job_name: 'pushgateway'
+        static_configs:
+          - targets: ['prometheus-prometheus-pushgateway.prometheus.svc:9091']
+      - job_name: 'windowsexporter'
+        metrics_path: '/metrics'
+        static_configs:
+          - targets: ['192.168.0.108:9182']
+      - job_name: 'node_exporter'
+        static_configs:
+          - targets: ['prometheus-prometheus-node-exporter:9100']  
       # A scrape configuration for running Prometheus on a Kubernetes cluster.
       # This uses separate scrape configs for cluster components (i.e. API server, node)
       # and services to allow each to use different authentication configs.
@@ -1264,7 +1302,76 @@ alertmanager:
   ## If false, alertmanager will not be installed
   ##
   enabled: true
-
+  config:
+   global:
+     resolve_timeout: 5m
+   
+   route:
+      group_by: ['alertname']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 1h
+      receiver: 'slack-notifications'   # default receiver
+      routes:
+        
+        
+        # Custom route for alerts from specific namespaces
+        - match:
+            severity: 'page'
+          receiver: 'slack-notifications'
+          group_wait: 1m
+          group_interval: 10m
+          repeat_interval: 1h
+        - match:
+            severity: 'warning'
+          receiver: 'web-hook'
+          group_wait: 1m
+          group_interval: 10m
+          repeat_interval: 1h
+        - match:
+            severity: critical
+          receiver: 'pager-duty-notifications'
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 30m
+   receivers:
+      - name: 'email-alerts'
+        email_configs:
+          - to: 'alerts@example.com'
+            from: 'alertmanager@example.com'
+            smarthost: 'smtp.example.com:587'
+            auth_username: 'smtp-user'
+            auth_password: 'smtp-password'
+     
+      - name: 'slack-notifications'
+        slack_configs:
+            - api_url: 'https://hooks.slack.com/services/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'
+              channel: '#promtrainingapr2025'
+              send_resolved: true
+              title: "{{ .CommonLabels.alertname }} - {{ .Status }}"
+              text: |
+               {{ range .Alerts }}
+                 *Alert:* {{ .Annotations.summary }}
+                 *Description:* {{ .Annotations.description }}
+                 *Severity:* {{ .Labels.severity }}
+                 *Source:* {{ .GeneratorURL }}
+               {{ end }}  
+      
+      - name: 'web-hook'
+        webhook_configs:
+            - url: 'http://host.docker.internal:4000/webhook'
+      
+      - name: 'pager-duty-notifications'
+        pagerduty_configs:
+        - service_key: '16c0a9f13ab04b06c0760161edb8afcc'  
+   inhibit_rules:
+    - source_matchers:
+       #- alertname = LowAvailableMemory
+       - inhibit="true"
+      target_matchers:
+       #- alertname = HighMemoryUsage
+       - inhibited="true" 
+      equal: ['instance', 'job']
   persistence:
     size: 2Gi
 
